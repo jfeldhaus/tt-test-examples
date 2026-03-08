@@ -1,0 +1,350 @@
+{
+  "application": {
+    "name": "QuantEdge Trading Platform",
+    "version": "4.2.1",
+    "build": 20260307,
+    "isLive": true,
+    "maintenanceMode": false,
+    "debugLevel": null,
+    "supportedMarkets": ["NYSE", "NASDAQ", "LSE", "TSX", "ASX"],
+    "config": {
+      "maxOrderSize": 1000000,
+      "defaultCurrency": "USD",
+      "sessionTimeoutSeconds": 1800,
+      "enableDarkPool": false,
+      "enableAlgoTrading": true,
+      "riskLimits": {
+        "maxDailyLoss": 50000.00,
+        "maxPositionSize": 250000.00,
+        "maxLeverage": 4.5,
+        "stopLossRequired": true
+      },
+      "feeTiers": [
+        { "tier": 1, "monthlyVolume": 0,        "makerFee": 0.0020, "takerFee": 0.0035 },
+        { "tier": 2, "monthlyVolume": 100000,   "makerFee": 0.0015, "takerFee": 0.0025 },
+        { "tier": 3, "monthlyVolume": 1000000,  "makerFee": 0.0010, "takerFee": 0.0018 },
+        { "tier": 4, "monthlyVolume": 10000000, "makerFee": 0.0005, "takerFee": 0.0010 }
+      ]
+    }
+  },
+
+  "user": {
+    "id": "USR-00482901",
+    "username": "jfeldhaus",
+    "email": "j.feldhaus@quantedge.io",
+    "fullName": "Jan Feldhaus",
+    "phone": "+1-416-555-0193",
+    "kycVerified": true,
+    "twoFactorEnabled": true,
+    "referralCode": "QE-REF-7721",
+    "referredBy": null,
+    "createdAt": "2024-01-15T09:23:11Z",
+    "lastLoginAt": "2026-03-07T08:04:55Z",
+    "roles": ["trader", "analyst"],
+    "preferences": {
+      "theme": "dark",
+      "defaultChart": "candlestick",
+      "timezone": "America/Toronto",
+      "currency": "CAD",
+      "notifications": {
+        "email": true,
+        "sms": false,
+        "push": true,
+        "priceAlerts": true,
+        "orderFills": true,
+        "newsDigest": false
+      },
+      "chartDefaults": {
+        "period": "1D",
+        "indicators": ["SMA_20", "SMA_50", "MACD", "RSI_14"],
+        "showVolume": true,
+        "showGrid": true,
+        "logScale": false
+      }
+    }
+  },
+
+  "accounts": [
+    {
+      "id": "ACC-CASH-00128",
+      "type": "cash",
+      "currency": "USD",
+      "balance": 84231.57,
+      "availableBalance": 61480.00,
+      "reservedForOrders": 22751.57,
+      "totalDeposited": 150000.00,
+      "totalWithdrawn": 72000.00,
+      "totalRealizedPnL": 6231.57,
+      "isDefault": true,
+      "isFrozen": false,
+      "frozenReason": null,
+      "marginUsed": 0.00,
+      "openedAt": "2024-01-15T09:30:00Z"
+    },
+    {
+      "id": "ACC-MRGN-00129",
+      "type": "margin",
+      "currency": "USD",
+      "balance": 32000.00,
+      "availableBalance": 18400.00,
+      "reservedForOrders": 13600.00,
+      "totalDeposited": 40000.00,
+      "totalWithdrawn": 12000.00,
+      "totalRealizedPnL": 4000.00,
+      "isDefault": false,
+      "isFrozen": false,
+      "frozenReason": null,
+      "marginUsed": 27200.00,
+      "openedAt": "2024-06-01T14:00:00Z"
+    }
+  ],
+
+  "portfolio": {
+    "accountId": "ACC-CASH-00128",
+    "asOf": "2026-03-07T15:30:00Z",
+    "totalValue": 146003.47,
+    "cashBalance": 84231.57,
+    "investedValue": 61771.90,
+    "unrealizedPnL": 4382.15,
+    "unrealizedPnLPercent": 7.63,
+    "dayPnL": -312.44,
+    "dayPnLPercent": -0.21,
+    "positions": [
+      {
+        "positionId": "POS-00019922",
+        "symbol": "AAPL",
+        "exchange": "NASDAQ",
+        "assetClass": "equity",
+        "quantity": 85,
+        "avgEntryPrice": 178.42,
+        "currentPrice": 194.11,
+        "marketValue": 16499.35,
+        "costBasis": 15165.70,
+        "unrealizedPnL": 1333.65,
+        "unrealizedPnLPercent": 8.79,
+        "dayChange": -1.23,
+        "dayChangePercent": -0.63,
+        "isShort": false,
+        "openedAt": "2025-09-12T13:45:22Z",
+        "lastUpdated": "2026-03-07T15:30:00Z"
+      },
+      {
+        "positionId": "POS-00021103",
+        "symbol": "MSFT",
+        "exchange": "NASDAQ",
+        "assetClass": "equity",
+        "quantity": 40,
+        "avgEntryPrice": 389.75,
+        "currentPrice": 412.30,
+        "marketValue": 16492.00,
+        "costBasis": 15590.00,
+        "unrealizedPnL": 902.00,
+        "unrealizedPnLPercent": 5.79,
+        "dayChange": 2.87,
+        "dayChangePercent": 0.70,
+        "isShort": false,
+        "openedAt": "2025-11-03T10:12:08Z",
+        "lastUpdated": "2026-03-07T15:30:00Z"
+      },
+      {
+        "positionId": "POS-00022871",
+        "symbol": "SPY",
+        "exchange": "NYSE",
+        "assetClass": "etf",
+        "quantity": 60,
+        "avgEntryPrice": 475.10,
+        "currentPrice": 481.35,
+        "marketValue": 28881.00,
+        "costBasis": 28506.00,
+        "unrealizedPnL": 375.00,
+        "unrealizedPnLPercent": 1.32,
+        "dayChange": -0.95,
+        "dayChangePercent": -0.20,
+        "isShort": false,
+        "openedAt": "2026-01-08T09:31:00Z",
+        "lastUpdated": "2026-03-07T15:30:00Z"
+      }
+    ],
+    "allocation": {
+      "byAssetClass": {
+        "equity": 53.00,
+        "etf": 47.00,
+        "fixedIncome": 0.00,
+        "crypto": 0.00,
+        "cash": 0.00
+      },
+      "bySector": {
+        "technology": 79.47,
+        "financials": 0.00,
+        "healthcare": 0.00,
+        "energy": 0.00,
+        "other": 20.53
+      }
+    }
+  },
+
+  "orders": [
+    {
+      "orderId": "ORD-20260307-88412",
+      "accountId": "ACC-CASH-00128",
+      "symbol": "NVDA",
+      "exchange": "NASDAQ",
+      "side": "buy",
+      "type": "limit",
+      "status": "open",
+      "quantity": 20,
+      "filledQuantity": 0,
+      "remainingQuantity": 20,
+      "limitPrice": 875.00,
+      "stopPrice": null,
+      "trailingStopPercent": null,
+      "avgFillPrice": null,
+      "estimatedValue": 17500.00,
+      "commission": null,
+      "timeInForce": "GTC",
+      "isExtendedHours": false,
+      "notes": "Accumulate on dip below 875",
+      "tags": ["swing-trade", "ai-sector"],
+      "createdAt": "2026-03-07T11:02:33Z",
+      "updatedAt": "2026-03-07T11:02:33Z",
+      "filledAt": null,
+      "cancelledAt": null,
+      "cancelReason": null
+    },
+    {
+      "orderId": "ORD-20260305-77301",
+      "accountId": "ACC-CASH-00128",
+      "symbol": "TSLA",
+      "exchange": "NASDAQ",
+      "side": "sell",
+      "type": "market",
+      "status": "filled",
+      "quantity": 15,
+      "filledQuantity": 15,
+      "remainingQuantity": 0,
+      "limitPrice": null,
+      "stopPrice": null,
+      "trailingStopPercent": null,
+      "avgFillPrice": 263.44,
+      "estimatedValue": 3951.60,
+      "commission": 0.00,
+      "timeInForce": "DAY",
+      "isExtendedHours": false,
+      "notes": null,
+      "tags": ["profit-take"],
+      "createdAt": "2026-03-05T14:28:10Z",
+      "updatedAt": "2026-03-05T14:28:19Z",
+      "filledAt": "2026-03-05T14:28:19Z",
+      "cancelledAt": null,
+      "cancelReason": null
+    }
+  ],
+
+  "watchlists": [
+    {
+      "id": "WL-001",
+      "name": "AI & Semiconductors",
+      "isDefault": true,
+      "symbols": ["NVDA", "AMD", "INTC", "QCOM", "AVGO", "TSM", "ARM"],
+      "createdAt": "2025-02-20T10:00:00Z"
+    },
+    {
+      "id": "WL-002",
+      "name": "Dividend Income",
+      "isDefault": false,
+      "symbols": ["JNJ", "KO", "PG", "VZ", "T", "MO", "ABBV"],
+      "createdAt": "2025-05-14T08:30:00Z"
+    }
+  ],
+
+  "alerts": [
+    {
+      "alertId": "ALT-00771",
+      "symbol": "NVDA",
+      "condition": "price_below",
+      "threshold": 875.00,
+      "currentValue": 891.32,
+      "isActive": true,
+      "isTriggered": false,
+      "triggeredAt": null,
+      "notifyVia": ["push", "email"],
+      "message": "NVDA dropped below buy target",
+      "createdAt": "2026-03-07T11:05:00Z"
+    },
+    {
+      "alertId": "ALT-00655",
+      "symbol": "AAPL",
+      "condition": "price_above",
+      "threshold": 200.00,
+      "currentValue": 194.11,
+      "isActive": true,
+      "isTriggered": false,
+      "triggeredAt": null,
+      "notifyVia": ["push"],
+      "message": "AAPL breakout above 200",
+      "createdAt": "2026-02-18T09:15:00Z"
+    }
+  ],
+
+  "marketData": {
+    "asOf": "2026-03-07T15:30:00Z",
+    "sessionStatus": "regular",
+    "indices": {
+      "SPX": { "last": 5412.73, "change": -11.42, "changePercent": -0.21, "ytdChangePercent": 3.87 },
+      "NDX": { "last": 18943.10, "change": 42.18,  "changePercent": 0.22,  "ytdChangePercent": 5.21 },
+      "DJI": { "last": 41882.55, "change": -98.33, "changePercent": -0.23, "ytdChangePercent": 2.14 },
+      "VIX": { "last": 18.42,   "change": 0.77,   "changePercent": 4.36,  "ytdChangePercent": null }
+    },
+    "forex": {
+      "USDCAD": 1.3621,
+      "EURUSD": 1.0844,
+      "GBPUSD": 1.2733,
+      "USDJPY": 148.92
+    },
+    "commodities": {
+      "goldUSDPerOz": 2914.50,
+      "silverUSDPerOz": 32.17,
+      "crudeoilWTIUSD": 68.44,
+      "naturalGasUSD": 3.82
+    },
+    "treasury": {
+      "yield2Y": 4.21,
+      "yield10Y": 4.48,
+      "yield30Y": 4.71,
+      "yieldCurveInverted": false
+    }
+  },
+
+  "auditLog": [
+    {
+      "eventId": "EVT-20260307-001",
+      "userId": "USR-00482901",
+      "action": "LOGIN",
+      "ipAddress": "142.113.88.201",
+      "userAgent": "QuantEdge-Desktop/4.2.1 (Windows 11)",
+      "success": true,
+      "detail": null,
+      "timestamp": "2026-03-07T08:04:55Z"
+    },
+    {
+      "eventId": "EVT-20260307-002",
+      "userId": "USR-00482901",
+      "action": "ORDER_PLACED",
+      "ipAddress": "142.113.88.201",
+      "userAgent": "QuantEdge-Desktop/4.2.1 (Windows 11)",
+      "success": true,
+      "detail": { "orderId": "ORD-20260307-88412", "symbol": "NVDA", "quantity": 20, "limitPrice": 875.00 },
+      "timestamp": "2026-03-07T11:02:33Z"
+    },
+    {
+      "eventId": "EVT-20260307-003",
+      "userId": "USR-00482901",
+      "action": "ALERT_CREATED",
+      "ipAddress": "142.113.88.201",
+      "userAgent": "QuantEdge-Desktop/4.2.1 (Windows 11)",
+      "success": true,
+      "detail": { "alertId": "ALT-00771", "symbol": "NVDA", "condition": "price_below", "threshold": 875.00 },
+      "timestamp": "2026-03-07T11:05:00Z"
+    }
+  ]
+}
