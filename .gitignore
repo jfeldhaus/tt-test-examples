@@ -1,0 +1,8 @@
+
+
+# Ignore all files ending in:
+*.class
+*.o
+*.log
+
+
