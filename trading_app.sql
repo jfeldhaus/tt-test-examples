@@ -999,3 +999,534 @@ ORDER BY p.unrealized_pnl DESC;
 
 
 
+
+-- ============================================================
+-- Order Risk and Compliance Report  (TimesTen dialect)
+--
+-- Demonstrates all four TimesTen JSON functions in one query:
+--   JSON_TABLE  – unnests $.orders[*] into relational columns;
+--                 also used in a CTE to extract $.alerts[*]
+--                 so that per-order alert lookup can be done
+--                 with a LEFT JOIN instead of PASSING (column
+--                 references in PASSING are not supported)
+--   JSON_VALUE  – reads scalar context values (platform name,
+--                 trader, risk parameters, session status)
+--   JSON_EXISTS – evaluates boolean compliance conditions
+--                 against fixed document paths
+--   JSON_QUERY  – returns raw JSON object/array fragments
+--                 (risk limits, market indices, treasury rates)
+--                 suitable for display or downstream parsing
+-- ============================================================
+WITH
+    -- Extract active alerts by symbol so they can be LEFT JOINed
+    -- onto each order row without a PASSING clause.
+    active_alerts AS (
+        SELECT DISTINCT jt.alert_symbol
+        FROM trade_documents td,
+             JSON_TABLE(td.doc, '$.alerts[*]' COLUMNS (
+                 alert_symbol VARCHAR2(10) PATH '$.symbol',
+                 is_active    VARCHAR2(5)  PATH '$.isActive'
+             )) jt
+        WHERE td.id = 1
+          AND jt.is_active = 'true'
+    )
+SELECT
+    -- Order identity and execution fields  (JSON_TABLE)
+    jt.order_id,
+    jt.symbol,
+    jt.exchange,
+    jt.side,
+    jt.order_type,
+    jt.status,
+    jt.quantity,
+    jt.filled_quantity,
+    ROUND(jt.limit_price,     2)  AS limit_price,
+    ROUND(jt.estimated_value, 2)  AS estimated_value,
+    jt.time_in_force,
+    jt.is_extended_hours,
+    jt.created_at,
+
+    -- Scalar platform and user context  (JSON_VALUE)
+    JSON_VALUE(td.doc, '$.application.name')                           AS platform,
+    JSON_VALUE(td.doc, '$.application.version')                        AS platform_version,
+    JSON_VALUE(td.doc, '$.user.username')                              AS trader,
+    JSON_VALUE(td.doc, '$.user.kycVerified')                           AS kyc_verified,
+    JSON_VALUE(td.doc, '$.application.config.maxOrderSize')            AS config_max_order_size,
+    JSON_VALUE(td.doc, '$.application.config.riskLimits.maxLeverage')  AS config_max_leverage,
+    JSON_VALUE(td.doc, '$.marketData.sessionStatus')                   AS session_status,
+    JSON_VALUE(td.doc, '$.portfolio.totalValue')                       AS portfolio_total_value,
+
+    -- Compliance and platform checks  (JSON_EXISTS)
+    CASE WHEN JSON_EXISTS(td.doc, '$.user.twoFactorEnabled?(@==true)')
+         THEN 'PASS' ELSE 'FAIL' END                                   AS check_2fa,
+    CASE WHEN JSON_EXISTS(td.doc, '$.user.kycVerified?(@==true)')
+         THEN 'PASS' ELSE 'FAIL' END                                   AS check_kyc,
+    CASE WHEN JSON_EXISTS(td.doc,
+             '$.application.config.riskLimits.stopLossRequired?(@==true)')
+         THEN 'REQUIRED' ELSE 'OPTIONAL' END                           AS stop_loss_policy,
+    CASE WHEN JSON_EXISTS(td.doc, '$.application.maintenanceMode?(@==true)')
+         THEN 'YES' ELSE 'NO' END                                      AS in_maintenance,
+
+    -- Per-order: active alert for this symbol (LEFT JOIN on alerts CTE)
+    CASE WHEN aa.alert_symbol IS NOT NULL
+         THEN 'YES' ELSE 'NO' END                                      AS active_alert_for_symbol,
+
+    -- Raw JSON fragments for audit or downstream display  (JSON_QUERY)
+    JSON_QUERY(td.doc, '$.application.config.riskLimits')              AS risk_limits_json,
+    JSON_QUERY(td.doc, '$.marketData.indices')                         AS market_indices_json,
+    JSON_QUERY(td.doc, '$.marketData.treasury')                        AS treasury_rates_json
+
+FROM trade_documents td,
+     JSON_TABLE(td.doc, '$.orders[*]' COLUMNS (
+         order_id          VARCHAR2(30) PATH '$.orderId',
+         symbol            VARCHAR2(10) PATH '$.symbol',
+         exchange          VARCHAR2(10) PATH '$.exchange',
+         side              VARCHAR2(5)  PATH '$.side',
+         order_type        VARCHAR2(10) PATH '$.type',
+         status            VARCHAR2(10) PATH '$.status',
+         quantity          NUMBER       PATH '$.quantity',
+         filled_quantity   NUMBER       PATH '$.filledQuantity',
+         limit_price       NUMBER       PATH '$.limitPrice',
+         estimated_value   NUMBER       PATH '$.estimatedValue',
+         time_in_force     VARCHAR2(5)  PATH '$.timeInForce',
+         is_extended_hours VARCHAR2(5)  PATH '$.isExtendedHours',
+         created_at        VARCHAR2(30) PATH '$.createdAt'
+     )) jt
+LEFT JOIN active_alerts aa ON aa.alert_symbol = jt.symbol
+WHERE td.id = 1
+ORDER BY jt.created_at;
+
+
+
+
+-- ============================================================
+-- Portfolio P&L Multi-Dimensional Breakdown  (TimesTen dialect)
+--
+-- Extracts position data via JSON_TABLE and produces a
+-- multi-dimensional aggregation using all three GROUP BY
+-- extensions in a single GROUPING SETS clause:
+--
+--   GROUPING SETS  – explicit tuple (exchange, asset_class,
+--                   pnl_status) gives the full 3-dimension
+--                   detail row for each combination present
+--
+--   ROLLUP         – ROLLUP(exchange, asset_class) generates
+--                   the exchange+asset_class subtotal, then
+--                   the exchange-only subtotal, then the
+--                   grand total: a strict top-down hierarchy
+--
+--   CUBE           – CUBE(asset_class, pnl_status) generates
+--                   all 4 combinations: both together, each
+--                   alone, and the grand total — a full
+--                   cross-tab across those two dimensions
+--
+-- JSON functions used:
+--   JSON_TABLE     – unnests $.portfolio.positions[*]
+--   JSON_VALUE     – pulls portfolio timestamp and market
+--                   session status as per-row constants
+--   JSON_EXISTS    – derives two boolean platform flags
+--                   (algo trading enabled, stop-loss required)
+--
+-- JSON_VALUE and JSON_EXISTS values are the same on every
+-- position row (they come from document-level paths). They
+-- are included in the CTE so that MAX() in the GROUP BY
+-- query recovers them on every output row without a
+-- separate CROSS JOIN.
+-- ============================================================
+WITH
+    positions AS (
+        SELECT
+            jt.symbol,
+            jt.exchange,
+            jt.asset_class,
+            jt.market_value,
+            jt.cost_basis,
+            jt.unrealized_pnl,
+            jt.unrealized_pnl_pct,
+            jt.day_change_pct,
+            -- Derived dimension: whether the position is currently profitable
+            CASE WHEN jt.unrealized_pnl >= 0
+                 THEN 'Gain' ELSE 'Loss'
+            END                                                        AS pnl_status,
+            -- Document-level scalars via JSON_VALUE — same on every row;
+            -- MAX() in the outer query recovers them per group.
+            JSON_VALUE(td.doc, '$.portfolio.asOf')                     AS portfolio_as_of,
+            JSON_VALUE(td.doc, '$.marketData.sessionStatus')           AS session_status,
+            -- Document-level boolean flags via JSON_EXISTS
+            CASE WHEN JSON_EXISTS(td.doc,
+                     '$.application.config.enableAlgoTrading?(@==true)')
+                 THEN 'Yes' ELSE 'No' END                              AS algo_trading_enabled,
+            CASE WHEN JSON_EXISTS(td.doc,
+                     '$.application.config.riskLimits.stopLossRequired?(@==true)')
+                 THEN 'Yes' ELSE 'No' END                              AS stop_loss_required
+        FROM trade_documents td,
+             JSON_TABLE(td.doc, '$.portfolio.positions[*]' COLUMNS (
+                 symbol             VARCHAR2(10) PATH '$.symbol',
+                 exchange           VARCHAR2(10) PATH '$.exchange',
+                 asset_class        VARCHAR2(20) PATH '$.assetClass',
+                 market_value       NUMBER       PATH '$.marketValue',
+                 cost_basis         NUMBER       PATH '$.costBasis',
+                 unrealized_pnl     NUMBER       PATH '$.unrealizedPnL',
+                 unrealized_pnl_pct NUMBER       PATH '$.unrealizedPnLPercent',
+                 day_change_pct     NUMBER       PATH '$.dayChangePercent'
+             )) jt
+        WHERE td.id = 1
+    )
+
+SELECT
+    -- Grouping dimensions (NULL when the dimension is rolled up)
+    p.exchange,
+    p.asset_class,
+    p.pnl_status,
+
+    -- GROUPING() returns 1 when the column is aggregated away, 0 otherwise.
+    -- Useful for programmatic consumption of the result set.
+    GROUPING(p.exchange)    AS grp_exchange,
+    GROUPING(p.asset_class) AS grp_asset_class,
+    GROUPING(p.pnl_status)  AS grp_pnl_status,
+
+    -- Human-readable label identifying which grouping rule produced each row.
+    CASE
+        WHEN GROUPING(p.exchange)=0 AND GROUPING(p.asset_class)=0
+             AND GROUPING(p.pnl_status)=0 THEN 'Detail (exchange x asset_class x pnl)'
+        WHEN GROUPING(p.exchange)=0 AND GROUPING(p.asset_class)=0
+             AND GROUPING(p.pnl_status)=1 THEN 'ROLLUP: exchange x asset_class subtotal'
+        WHEN GROUPING(p.exchange)=0 AND GROUPING(p.asset_class)=1
+             AND GROUPING(p.pnl_status)=1 THEN 'ROLLUP: exchange subtotal'
+        WHEN GROUPING(p.exchange)=1 AND GROUPING(p.asset_class)=0
+             AND GROUPING(p.pnl_status)=0 THEN 'CUBE: asset_class x pnl_status subtotal'
+        WHEN GROUPING(p.exchange)=1 AND GROUPING(p.asset_class)=0
+             AND GROUPING(p.pnl_status)=1 THEN 'CUBE: asset_class subtotal'
+        WHEN GROUPING(p.exchange)=1 AND GROUPING(p.asset_class)=1
+             AND GROUPING(p.pnl_status)=0 THEN 'CUBE: pnl_status subtotal'
+        WHEN GROUPING(p.exchange)=1 AND GROUPING(p.asset_class)=1
+             AND GROUPING(p.pnl_status)=1 THEN 'Grand Total'
+    END                                                                AS group_level,
+
+    -- Aggregate measures
+    COUNT(*)                                                           AS position_count,
+    ROUND(SUM(p.market_value),                                2)      AS total_market_value,
+    ROUND(SUM(p.cost_basis),                                  2)      AS total_cost_basis,
+    ROUND(SUM(p.unrealized_pnl),                              2)      AS total_unrealized_pnl,
+    ROUND(AVG(p.unrealized_pnl_pct),                          2)      AS avg_pnl_pct,
+    ROUND(SUM(p.day_change_pct * p.market_value)
+          / SUM(p.market_value),                              4)      AS wtd_day_chg_pct,
+
+    -- Recover the constant document-level values via MAX()
+    MAX(p.portfolio_as_of)                                             AS portfolio_as_of,
+    MAX(p.session_status)                                              AS session_status,
+    MAX(p.algo_trading_enabled)                                        AS algo_trading_enabled,
+    MAX(p.stop_loss_required)                                          AS stop_loss_required
+
+FROM positions p
+
+GROUP BY GROUPING SETS (
+    -- Explicit 3-dimension detail  (GROUPING SETS)
+    (p.exchange, p.asset_class, p.pnl_status),
+
+    -- Hierarchical subtotals top-down  (ROLLUP)
+    --   level 2: (exchange, asset_class)
+    --   level 1: (exchange)
+    --   level 0: ()  grand total
+    ROLLUP(p.exchange, p.asset_class),
+
+    -- Full cross-tab of asset class and P&L status  (CUBE)
+    --   (asset_class, pnl_status), (asset_class), (pnl_status), ()
+    CUBE(p.asset_class, p.pnl_status)
+)
+
+ORDER BY
+    -- Rolled-up rows sort after their detail rows within each dimension
+    GROUPING(p.exchange),
+    GROUPING(p.asset_class),
+    GROUPING(p.pnl_status),
+    p.exchange    NULLS LAST,
+    p.asset_class NULLS LAST,
+    p.pnl_status  NULLS LAST;
+
+
+
+
+
+
+-- ============================================================
+-- Platform and User Profile Report  (TimesTen dialect)
+--
+-- Passes JSON function results through a broad set of SQL
+-- scalar functions to show how JSON_VALUE, JSON_TABLE,
+-- JSON_EXISTS, and JSON_QUERY compose with the rest of the
+-- SQL function library.
+--
+-- pos_summary CTE  – extracts positions via JSON_TABLE then
+--                    applies aggregate, string, and numeric
+--                    SQL functions to the unnested rows,
+--                    collapsing them to a single summary row.
+--
+-- Main SELECT      – produces one row from trade_documents;
+--                    JSON_VALUE feeds string, numeric, date,
+--                    null-handling, and conversion functions;
+--                    JSON_EXISTS drives CASE conditions;
+--                    JSON_QUERY feeds string-inspection calls.
+-- ============================================================
+WITH
+    pos_summary AS (
+        SELECT
+            COUNT(*)                                               AS position_count,
+            -- Aggregate functions over JSON_TABLE numeric columns
+            ROUND(SUM(jt.market_value),        2)                 AS total_mkt_value,
+            ROUND(AVG(jt.unrealized_pnl_pct),  2)                 AS avg_pnl_pct,
+            ROUND(MAX(jt.unrealized_pnl),      2)                 AS best_pnl,
+            ROUND(MIN(jt.unrealized_pnl_pct),  2)                 AS worst_pnl_pct,
+            -- String functions over JSON_TABLE string columns
+            UPPER(MAX(jt.symbol))                                  AS last_symbol_alpha,
+            LENGTH(MIN(jt.exchange))                               AS min_exchange_len,
+            REPLACE(MAX(jt.asset_class), 'y', 'Y')                AS asset_class_fmt,
+            -- Numeric functions over JSON_TABLE numeric columns
+            CEIL (MAX(jt.market_value) / 1000)                    AS max_val_k_ceil,
+            FLOOR(MIN(jt.unrealized_pnl_pct))                     AS worst_pnl_floor,
+            ABS  (MIN(jt.unrealized_pnl_pct))                     AS worst_pnl_abs
+        FROM trade_documents td,
+             JSON_TABLE(td.doc, '$.portfolio.positions[*]' COLUMNS (
+                 symbol             VARCHAR2(10) PATH '$.symbol',
+                 exchange           VARCHAR2(10) PATH '$.exchange',
+                 asset_class        VARCHAR2(20) PATH '$.assetClass',
+                 market_value       NUMBER       PATH '$.marketValue',
+                 unrealized_pnl     NUMBER       PATH '$.unrealizedPnL',
+                 unrealized_pnl_pct NUMBER       PATH '$.unrealizedPnLPercent'
+             )) jt
+        WHERE td.id = 1
+    )
+
+SELECT
+
+    -- --------------------------------------------------------
+    -- String functions on JSON_VALUE character results
+    -- --------------------------------------------------------
+    UPPER(JSON_VALUE(td.doc, '$.user.username'))
+        AS username_upper,
+
+    LOWER(JSON_VALUE(td.doc, '$.user.email'))
+        AS email_lower,
+
+    -- Capitalise first letter of each word (INITCAP not supported in TimesTen):
+    -- upper first char of first word + lower remainder, then repeat for second word
+    UPPER(SUBSTR(JSON_VALUE(td.doc, '$.user.fullName'), 1, 1))
+        || LOWER(SUBSTR(JSON_VALUE(td.doc, '$.user.fullName'), 2,
+                        INSTR(JSON_VALUE(td.doc, '$.user.fullName'), ' ') - 2))
+        || ' '
+        || UPPER(SUBSTR(JSON_VALUE(td.doc, '$.user.fullName'),
+                        INSTR(JSON_VALUE(td.doc, '$.user.fullName'), ' ') + 1, 1))
+        || LOWER(SUBSTR(JSON_VALUE(td.doc, '$.user.fullName'),
+                        INSTR(JSON_VALUE(td.doc, '$.user.fullName'), ' ') + 2))
+        AS full_name_initcap,
+
+    LENGTH(JSON_VALUE(td.doc, '$.user.email'))
+        AS email_length,
+
+    INSTR(JSON_VALUE(td.doc, '$.user.email'), '@')
+        AS at_sign_position,
+
+    -- Extract the local part of the email address (before @)
+    SUBSTR(JSON_VALUE(td.doc, '$.user.email'),
+           1,
+           INSTR(JSON_VALUE(td.doc, '$.user.email'), '@') - 1)
+        AS email_local_part,
+
+    REPLACE(JSON_VALUE(td.doc, '$.user.email'), '@', ' [at] ')
+        AS email_obfuscated,
+
+    LPAD(JSON_VALUE(td.doc, '$.application.version'), 10, '.')
+        AS version_lpadded,
+
+    RPAD(JSON_VALUE(td.doc, '$.user.preferences.timezone'), 25, '-')
+        AS timezone_rpadded,
+
+    TRIM(JSON_VALUE(td.doc, '$.user.preferences.theme'))
+        AS theme_trimmed,
+
+    -- Composite display address built with ||
+    UPPER(JSON_VALUE(td.doc, '$.user.username'))
+        || ' <' || LOWER(JSON_VALUE(td.doc, '$.user.email')) || '>'
+        AS display_address,
+
+    -- --------------------------------------------------------
+    -- Numeric functions on JSON_VALUE RETURNING NUMBER results
+    -- --------------------------------------------------------
+    ROUND(JSON_VALUE(td.doc, '$.portfolio.totalValue'
+              RETURNING NUMBER), 0)
+        AS portfolio_value_rounded,
+
+    TRUNC(JSON_VALUE(td.doc, '$.portfolio.unrealizedPnLPercent'
+              RETURNING NUMBER), 1)
+        AS pnl_pct_truncated,
+
+    ABS(JSON_VALUE(td.doc, '$.portfolio.dayPnL'
+            RETURNING NUMBER))
+        AS day_pnl_absolute,
+
+    -- SIGN: -1 = down day, 0 = flat, 1 = up day
+    SIGN(JSON_VALUE(td.doc, '$.portfolio.dayPnL'
+             RETURNING NUMBER))
+        AS day_pnl_direction,
+
+    CEIL(JSON_VALUE(td.doc, '$.application.config.maxOrderSize'
+             RETURNING NUMBER) / 1000)
+        AS max_order_thousands_ceil,
+
+    FLOOR(JSON_VALUE(td.doc, '$.portfolio.unrealizedPnLPercent'
+               RETURNING NUMBER))
+        AS pnl_pct_floor,
+
+    -- Approximate compound annual return: (1 + r)^12 - 1
+    ROUND(POWER(1 + JSON_VALUE(td.doc, '$.portfolio.unrealizedPnLPercent'
+                        RETURNING NUMBER) / 100, 12) - 1, 4)
+        AS compounded_annual_return,
+
+    ROUND(SQRT(JSON_VALUE(td.doc, '$.marketData.treasury.yield10Y'
+                   RETURNING NUMBER)), 4)
+        AS yield_10y_sqrt,
+
+    -- Build number encodes YYYYMMDD; mod 100 extracts the day component
+    MOD(JSON_VALUE(td.doc, '$.application.build'
+            RETURNING NUMBER), 100)
+        AS build_day_component,
+
+    -- --------------------------------------------------------
+    -- Date / time functions on JSON_VALUE timestamp strings
+    -- --------------------------------------------------------
+    TO_CHAR(
+        TO_TIMESTAMP(JSON_VALUE(td.doc, '$.portfolio.asOf'),
+                     'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+        'DD-Mon-YYYY HH24:MI')
+        AS portfolio_as_of_fmt,
+
+    EXTRACT(YEAR FROM
+        TO_TIMESTAMP(JSON_VALUE(td.doc, '$.user.createdAt'),
+                     'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+        AS account_open_year,
+
+    ROUND(MONTHS_BETWEEN(
+        TO_TIMESTAMP(JSON_VALUE(td.doc, '$.user.lastLoginAt'),
+                     'YYYY-MM-DD"T"HH24:MI:SS"Z"'),
+        TO_TIMESTAMP(JSON_VALUE(td.doc, '$.user.createdAt'),
+                     'YYYY-MM-DD"T"HH24:MI:SS"Z"')), 1)
+        AS account_age_months,
+
+    -- --------------------------------------------------------
+    -- Null-handling functions
+    -- ($.user.referredBy and $.application.debugLevel are null)
+    -- --------------------------------------------------------
+    NVL(JSON_VALUE(td.doc, '$.user.referredBy'), 'Direct Signup')
+        AS acquisition_source,
+
+    -- NVL2 not supported; equivalent: CASE WHEN expr IS NOT NULL THEN ... ELSE ... END
+    CASE WHEN JSON_VALUE(td.doc, '$.user.referredBy') IS NOT NULL
+         THEN 'Referred by: ' || JSON_VALUE(td.doc, '$.user.referredBy')
+         ELSE 'Organic'
+    END
+        AS referral_label,
+
+    COALESCE(JSON_VALUE(td.doc, '$.application.debugLevel'),
+             JSON_VALUE(td.doc, '$.user.referredBy'),
+             'N/A')
+        AS first_non_null_meta,
+
+    -- Returns NULL when user currency matches the app default currency,
+    -- or the user currency when it differs (here CAD vs USD → 'CAD')
+    NULLIF(JSON_VALUE(td.doc, '$.user.preferences.currency'),
+           JSON_VALUE(td.doc, '$.application.config.defaultCurrency'))
+        AS non_default_currency,
+
+    -- --------------------------------------------------------
+    -- Conversion functions
+    -- --------------------------------------------------------
+    TO_CHAR(JSON_VALUE(td.doc, '$.portfolio.totalValue'
+                RETURNING NUMBER), 'FM$999,999,990.00')
+        AS portfolio_value_currency_fmt,
+
+    TO_CHAR(JSON_VALUE(td.doc, '$.marketData.treasury.yield10Y'
+                RETURNING NUMBER), 'FM990.00') || '%'
+        AS yield_10y_pct_fmt,
+
+    -- --------------------------------------------------------
+    -- Conditional functions (CASE, DECODE, GREATEST, LEAST)
+    -- --------------------------------------------------------
+    DECODE(JSON_VALUE(td.doc, '$.user.preferences.theme'),
+           'dark',  'Dark Mode',
+           'light', 'Light Mode',
+                    'System Default')
+        AS theme_label,
+
+    DECODE(JSON_VALUE(td.doc, '$.marketData.sessionStatus'),
+           'regular',         'Regular Hours',
+           'pre-market',      'Pre-Market',
+           'after-hours',     'After Hours',
+                              'Closed')
+        AS session_label,
+
+    GREATEST(JSON_VALUE(td.doc, '$.accounts[0].balance' RETURNING NUMBER),
+             JSON_VALUE(td.doc, '$.accounts[1].balance' RETURNING NUMBER))
+        AS largest_account_balance,
+
+    LEAST(JSON_VALUE(td.doc, '$.accounts[0].balance' RETURNING NUMBER),
+          JSON_VALUE(td.doc, '$.accounts[1].balance' RETURNING NUMBER))
+        AS smallest_account_balance,
+
+    -- --------------------------------------------------------
+    -- JSON_EXISTS driving CASE conditions
+    -- --------------------------------------------------------
+    CASE
+        WHEN JSON_EXISTS(td.doc, '$.user.twoFactorEnabled?(@==true)')
+             AND JSON_EXISTS(td.doc, '$.user.kycVerified?(@==true)')
+        THEN 'Fully Verified'
+        WHEN JSON_EXISTS(td.doc, '$.user.kycVerified?(@==true)')
+        THEN 'KYC Only'
+        ELSE 'Unverified'
+    END AS verification_status,
+
+    CASE
+        WHEN JSON_EXISTS(td.doc, '$.application.isLive?(@==true)')
+             AND JSON_EXISTS(td.doc, '$.application.maintenanceMode?(@==false)')
+        THEN 'Live'
+        WHEN JSON_EXISTS(td.doc, '$.application.isLive?(@==true)')
+        THEN 'Live (Maintenance)'
+        ELSE 'Offline'
+    END AS platform_status,
+
+    -- --------------------------------------------------------
+    -- JSON_QUERY results passed to string-inspection functions
+    -- --------------------------------------------------------
+
+    -- Length of the serialised risk-limits JSON object
+    LENGTH(JSON_QUERY(td.doc, '$.application.config.riskLimits'))
+        AS risk_limits_json_len,
+
+    -- Strip double-quotes for a compact, readable forex snapshot
+    REPLACE(JSON_QUERY(td.doc, '$.marketData.forex'), '"', '')
+        AS forex_compact,
+
+    -- Inner content of the chart indicators array (strips outer [ ])
+    SUBSTR(JSON_QUERY(td.doc, '$.user.preferences.chartDefaults.indicators'),
+           2,
+           LENGTH(JSON_QUERY(td.doc,
+               '$.user.preferences.chartDefaults.indicators')) - 2)
+        AS chart_indicators_inner,
+
+    -- --------------------------------------------------------
+    -- Position aggregate context from the pos_summary CTE
+    -- --------------------------------------------------------
+    ps.position_count,
+    ps.total_mkt_value,
+    ps.avg_pnl_pct,
+    ps.best_pnl,
+    ps.worst_pnl_pct,
+    ps.last_symbol_alpha,
+    ps.min_exchange_len,
+    ps.asset_class_fmt,
+    ps.max_val_k_ceil,
+    ps.worst_pnl_floor,
+    ps.worst_pnl_abs
+
+FROM trade_documents td
+CROSS JOIN pos_summary ps
+WHERE td.id = 1;
